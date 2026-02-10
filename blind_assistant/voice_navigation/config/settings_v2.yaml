@@ -1,0 +1,293 @@
+# ============================================
+# ENHANCED NAVIGATION SYSTEM CONFIGURATION
+# ============================================
+# Version: 2.0 - Advanced Navigation Upgrade
+# Features: Depth Estimation, Path Planning, Spatial Mapping
+
+# ============================================
+# CAMERA CONFIGURATION
+# ============================================
+camera:
+  source: 0
+  backend: "avfoundation"
+  width: 640
+  height: 480
+  fps: 30
+  buffer_size: 2
+  frame_skip: 3
+  auto_restart: true
+  restart_delay_sec: 2.0
+  warmup_frames: 10
+  loop_video: true
+
+# ============================================
+# YOLO DETECTION
+# ============================================
+yolo:
+  model_path: "models/yolo/yolov8n.pt"
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+  device: "cpu"
+  max_detections: 10
+  img_size: 640
+  allowed_classes: []
+
+# ============================================
+# DEPTH ESTIMATION (NEW - MIDAS)
+# ============================================
+depth:
+  enabled: true
+  method: "midas"
+  model: "dpt_hybrid"
+  use_gpu: false
+  bbox_method: "median"
+  max_depth_m: 10.0
+  min_depth_m: 0.3
+  calibration:
+    auto_calibrate: true
+    reference_distance_m: 2.0
+    reference_object: "person"
+  skip_frames: 2
+
+# ============================================
+# PATH PLANNING (NEW - A*)
+# ============================================
+path_planning:
+  enabled: true
+  grid_resolution: 10
+  obstacle_threshold: 0.7
+  safe_clearance_px: 50
+  max_iterations: 5000
+  diagonal_cost: 1.414
+  straight_cost: 1.0
+  safety_weight: 2.0
+  smoothness_weight: 0.5
+  default_goal_distance_m: 3.0
+  goal_zone: "center"
+  smooth_path: true
+  angle_threshold: 0.3
+
+# ============================================
+# SPATIAL MAPPING (NEW - 3D SCENE)
+# ============================================
+spatial_mapping:
+  enabled: true
+  floor_detection: true
+  ceiling_detection: true
+  opening_detection: true
+  stair_detection: false
+  floor_ransac_iterations: 100
+  floor_inlier_threshold: 10
+  floor_min_y: 0.6
+  min_opening_width: 50
+  min_opening_height: 100
+  opening_aspect_ratio: [0.3, 3.0]
+  memory_frames: 30
+  persistence_threshold: 0.8
+
+# ============================================
+# SAFETY MANAGEMENT (ENHANCED)
+# ============================================
+safety:
+  distance_mode: "depth"
+  ignore_classes:
+    - tv
+    - laptop
+    - remote
+    - book
+    - cell phone
+    - clock
+    - keyboard
+    - mouse
+  danger_levels:
+    critical:
+      distance_m: 1.0
+      priority: 5
+      voice_profile: "urgent"
+    warning:
+      distance_m: 2.5
+      priority: 3
+      voice_profile: "alert"
+    info:
+      distance_m: 5.0
+      priority: 1
+      voice_profile: "calm"
+  zones:
+    center: [0.3, 0.7]
+    left: [0.0, 0.3]
+    right: [0.7, 1.0]
+  deduplication_window_sec: 3.0
+  center_zone_multiplier: 0.8
+  priority_boost:
+    car: 20
+    truck: 20
+    bus: 20
+    motorcycle: 15
+    person: 10
+    bicycle: 10
+    dog: 5
+  use_depth_distance: true
+  depth_confidence_threshold: 0.5
+
+# ============================================
+# SCENE ANALYSIS (ENHANCED)
+# ============================================
+scene:
+  tracking_enabled: true
+  history_seconds: 5
+  history_frames: 50
+  min_movement_threshold_px: 10
+  grouping_enabled: true
+  grouping_distance_px: 100
+  use_depth_for_tracking: true
+  occlusion_handling: true
+
+# ============================================
+# LLM ASSISTANT (ENHANCED)
+# ============================================
+llm:
+  enabled: true
+  model: "llama3.2:3b"
+  temperature: 0.7
+  max_tokens: 150
+  timeout_sec: 2.0
+  include_spatial_context: true
+  include_path_guidance: true
+  cache:
+    enabled: true
+    max_entries: 100
+    ttl_seconds: 300
+  invoke_conditions:
+    min_objects: 2
+    complex_scene: true
+    on_user_query: true
+    on_path_blocked: true
+
+# ============================================
+# AUDIO FEEDBACK (ENHANCED)
+# ============================================
+audio:
+  enabled: true
+  engine: "pyttsx3"
+  voice_profiles:
+    urgent:
+      rate: 200
+      volume: 1.0
+    alert:
+      rate: 175
+      volume: 0.9
+    calm:
+      rate: 150
+      volume: 0.8
+    guidance:
+      rate: 160
+      volume: 0.85
+  verbosity: "standard"
+  interrupt_on_critical: true
+  max_alerts_per_cycle: 3
+  announce_path_changes: true
+  announce_openings: true
+  announce_spatial_features: false
+  voice_index: 0
+
+# ============================================
+# VOICE INPUT
+# ============================================
+voice_input:
+  enabled: true
+  activation_mode: "push_to_talk"
+  activation_key: "space"
+  timeout_sec: 5.0
+  phrase_time_limit: 10.0
+  mic_index: null
+  energy_threshold: 4000
+  quick_commands:
+    enabled: true
+    commands:
+      - trigger: "status"
+        action: "describe_scene"
+      - trigger: "navigate"
+        action: "plan_path"
+      - trigger: "safe"
+        action: "check_path_safety"
+
+# ============================================
+# TELEMETRY & LOGGING
+# ============================================
+telemetry:
+  enabled: true
+  log_directory: "data/logs"
+  log_level: "INFO"
+  log_frames: false
+  log_detections: true
+  log_depth: true
+  log_paths: true
+  log_spatial_features: true
+  log_latency: true
+  log_alerts: true
+  log_llm_responses: true
+  performance_warning_threshold_ms: 1500
+  new_session_on_start: true
+
+# ============================================
+# PERFORMANCE TUNING
+# ============================================
+performance:
+  adaptive_skip: true
+  target_latency_ms: 800
+  max_frame_skip: 5
+  prioritize_depth: false
+  max_memory_mb: 2048
+
+# ============================================
+# DEBUG & DEVELOPMENT
+# ============================================
+debug:
+  show_video: true
+  show_bboxes: true
+  show_zones: true
+  show_fps: true
+  show_depth_map: true
+  show_path: true
+  show_spatial_features: true
+  show_occupancy_grid: false
+  print_latency: true
+  print_detections: true
+  print_alerts: false
+  print_depth_stats: false
+  print_path_stats: false
+  enable_profiler: false
+  mock_camera: false
+  mock_video_path: "data/test_scenarios/crowded_hallway.mp4"
+
+# ============================================
+# SYSTEM
+# ============================================
+system:
+  shutdown_timeout_sec: 5.0
+  quit_key: 'q'
+  max_consecutive_errors: 10
+  error_recovery_mode: "restart"
+  modules:
+    camera: true
+    detector: true
+    depth: true
+    safety: true
+    scene: true
+    spatial: true
+    path_planner: true
+    llm: true
+    audio: true
+    voice_input: true
+
+# ============================================
+# CALIBRATION DATA
+# ============================================
+calibration:
+  depth_scale: 1.0
+  depth_offset: 0.0
+  camera_matrix: null
+  distortion_coeffs: null
+  pixels_per_meter_at_2m: 200
+  last_calibrated: null
+  calibration_confidence: 0.0
