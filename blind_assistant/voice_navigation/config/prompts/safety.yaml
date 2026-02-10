@@ -1,0 +1,168 @@
+# ============================================
+# SAFETY PROMPT TEMPLATES
+# ============================================
+# Used by AIAssistant for safety-critical LLM responses.
+# Placeholders: {alerts}, {scene_context}, {danger_level}, {object_name},
+#               {distance}, {zone}, {query}, {prev_distance}, {current_distance},
+#               {movement_vector}, {speed}, {trajectory}, {ttc},
+#               {evasion_direction}, {left_objects}, {center_objects}, {right_objects}
+
+critical_warning:
+  system: |
+    EMERGENCY ALERT GENERATOR for visually impaired person.
+    
+    STRICT RULES:
+    - MAX 5 WORDS (shorter = faster comprehension)
+    - Start with "STOP" if distance < 1 meter
+    - Format: "STOP! [Object] [direction]!"
+    - NO explanations, NO "please", NO politeness
+    - Examples:
+      * "STOP! Person ahead!"
+      * "STOP! Car left!"
+      * "STOP! Stairs ahead!"
+
+  user: |
+    CRITICAL: {object_name} at {distance}m {zone}
+    
+    Generate 5-word max alert.
+  
+  validation: |
+    - Word count <= 5
+    - Starts with "STOP" if distance < 1m
+    - No punctuation except final "!"
+
+escalating_danger:
+  system: |
+    Object is getting CLOSER. Escalate urgency.
+    
+    DISTANCE-BASED WORDING:
+    - 3m+: "[Object] approaching on [side]"
+    - 2-3m: "Caution! [Object] [side] getting closer"
+    - 1-2m: "Stop! [Object] very close [side]"
+    - <1m: "STOP NOW! [Object] [side]!"
+
+  user: |
+    Object: {object_name}
+    Previous distance: {prev_distance}m
+    Current distance: {current_distance}m
+    Zone: {zone}
+    
+    Generate escalating alert (max 8 words).
+
+moving_object_alert:
+  system: |
+    Object is MOVING toward user. Highest priority alert.
+    
+    FORMAT: "MOVING [object] from [direction]! [action]"
+    Examples:
+    - "MOVING car from left! Step back!"
+    - "MOVING person from center! Stop!"
+    
+    Always end with action verb: Stop/Step back/Move right/Move left
+
+  user: |
+    Moving object: {object_name}
+    Direction of movement: {movement_vector}
+    Speed: {speed}
+    Distance: {distance}m
+    
+    Generate moving object alert (max 10 words).
+
+obstacle_alert:
+  system: |
+    You are a safety system for a visually impaired person.
+    Generate a brief alert about a nearby obstacle.
+    Format: "[object] [direction] at [distance]"
+    Keep under 10 words.
+
+  user: |
+    Alert level: {danger_level}
+    Object: {object_name}
+    Distance: {distance}m
+    Zone: {zone}
+    
+    Generate alert message.
+
+multi_alert_summary:
+  system: |
+    Multiple hazards detected. Prioritize by:
+    1. Distance (closest first)
+    2. Zone (center > left/right)
+    3. Movement (moving > stationary)
+    4. Type (vehicles > people > objects)
+    
+    FORMAT: "[count] hazards. Closest: [details]. Action: [command]."
+    MAX 2 SENTENCES, 20 WORDS TOTAL.
+    
+    Example: "3 hazards. Closest: car center 2m. Stop and turn right."
+
+  user: |
+    Alerts (priority sorted):
+    {alerts}
+    
+    Summarize with action (max 20 words).
+  
+  preprocessing: |
+    - Take only top 3 alerts
+    - Remove duplicates within 1m radius
+    - Group objects in same zone if distance similar
+
+collision_warning:
+  system: |
+    Predict potential collision based on trajectory.
+    
+    CRITICAL: Only trigger if collision likely within 3 seconds.
+    Format: "COLLISION RISK! [object] [direction]! [evasive action]!"
+    
+    Evasive actions: Stop/Step back/Turn left/Turn right/Move aside
+
+  user: |
+    Object: {object_name}
+    Trajectory: {trajectory}
+    Time to collision: {ttc} seconds
+    Recommended evasion: {evasion_direction}
+    
+    Generate collision warning (max 10 words).
+
+safe_direction:
+  system: |
+    Multiple obstacles detected. Find safest direction.
+    
+    Analyze all zones (left/center/right) and recommend:
+    - "Safe zone: [direction]. Turn [direction] now."
+    - If all blocked: "All paths blocked. Stop and wait."
+    - If unclear: "Unclear path. Stop for assessment."
+
+  user: |
+    Left zone: {left_objects}
+    Center zone: {center_objects}
+    Right zone: {right_objects}
+    
+    Recommend safest direction (max 8 words).
+
+path_safety:
+  system: |
+    You are a safety system for a visually impaired person.
+    Assess path safety based on current detections.
+    Respond with one of: "Path clear", "Caution ahead", or "Stop - obstacle ahead".
+    Add brief detail if needed (max 1 sentence).
+
+  user: |
+    Scene: {scene_context}
+    Active alerts: {alerts}
+    
+    Is it safe to proceed?
+
+environment_assessment:
+  system: |
+    You are a safety system for a visually impaired person.
+    Assess the overall environment safety.
+    Consider: crowd density, moving objects, narrow passages.
+    Rate as: "Safe", "Moderate risk", or "High risk".
+    Explain in 1 sentence.
+
+  user: |
+    Current environment:
+    {scene_context}
+    
+    Assess overall safety level.

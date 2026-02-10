@@ -1,0 +1,137 @@
+# ============================================
+# PRODUCTION REQUIREMENTS
+# ============================================
+# Pin versions for reproducibility
+# Use `pip install -r requirements.txt`
+# Last updated: February 2026
+
+# ============================================
+# Core - Computer Vision
+# ============================================
+opencv-python==4.9.0.80
+# Alternative for headless systems:
+# opencv-python-headless==4.9.0.80
+
+numpy==1.26.4
+# DO NOT use numpy 2.x yet (compatibility issues with ultralytics)
+
+# ============================================
+# Core - Object Detection
+# ============================================
+ultralytics==8.1.24
+torch==2.2.0
+# PyTorch auto-installs correct CUDA version
+# For CPU-only: torch==2.2.0+cpu
+# For CUDA 11.8: torch==2.2.0+cu118
+
+torchvision==0.17.0
+# Must match torch version
+
+# ============================================
+# Core - Configuration
+# ============================================
+pyyaml==6.0.1
+
+# ============================================
+# Audio - Text-to-Speech
+# ============================================
+pyttsx3==2.90
+
+# PLATFORM-SPECIFIC TTS ENGINES (auto-detected):
+# - macOS: Uses NSSpeechSynthesizer (built-in)
+# - Windows: Uses SAPI5 (built-in)
+# - Linux: Requires espeak
+#   sudo apt-get install espeak  # Debian/Ubuntu
+#   sudo dnf install espeak       # Fedora
+
+# ============================================
+# Audio - Speech Recognition
+# ============================================
+SpeechRecognition==3.10.1
+
+# REQUIRES: PyAudio for microphone input
+PyAudio==0.2.14
+# ⚠️  PyAudio installation can fail on some systems!
+#
+# macOS fix:
+#   brew install portaudio
+#   pip install pyaudio
+#
+# Linux fix:
+#   sudo apt-get install python3-pyaudio portaudio19-dev
+#
+# Windows: Usually works out of the box
+#
+# If PyAudio fails, try:
+#   pip install --upgrade wheel setuptools
+#   pip install pipwin
+#   pipwin install pyaudio
+
+# ============================================
+# Input - Keyboard Monitoring
+# ============================================
+pynput==1.7.6
+
+# ============================================
+# LLM - Ollama Client
+# ============================================
+requests==2.31.0
+# For calling Ollama HTTP API
+
+# NOTE: Ollama server must be installed separately!
+# Installation:
+#   macOS/Linux: curl https://ollama.ai/install.sh | sh
+#   Windows: Download from https://ollama.ai/download
+#
+# Then pull model:
+#   ollama pull llama3.2:3b
+
+# ============================================
+# Optional - Performance Monitoring
+# ============================================
+psutil==5.9.8
+# For memory/CPU usage tracking
+
+# ============================================
+# Optional - Development/Testing
+# ============================================
+# Uncomment for development:
+# pytest==7.4.4
+# pytest-cov==4.1.0
+# black==24.1.1
+# flake8==7.0.0
+# mypy==1.8.0
+
+# ============================================
+# KNOWN COMPATIBILITY ISSUES
+# ============================================
+#
+# 1. NumPy 2.x breaks ultralytics - use 1.26.x
+# 2. PyAudio requires system audio libraries
+# 3. pyttsx3 needs espeak on Linux
+# 4. torch auto-downloads large files (~2GB)
+#
+# ============================================
+# INSTALLATION TROUBLESHOOTING
+# ============================================
+#
+# If `pip install -r requirements.txt` fails:
+#
+# 1. Update pip/setuptools:
+#    python -m pip install --upgrade pip setuptools wheel
+#
+# 2. Install system dependencies (Linux):
+#    sudo apt-get update
+#    sudo apt-get install python3-dev portaudio19-dev espeak
+#
+# 3. Install PyAudio separately (if fails):
+#    # Try binary wheel:
+#    pip install pipwin
+#    pipwin install pyaudio
+#
+# 4. Install PyTorch for your system:
+#    Visit: https://pytorch.org/get-started/locally/
+#
+# 5. For macOS Silicon (M1/M2):
+#    Use Rosetta or native ARM builds
+#    Check ultralytics docs for Metal acceleration
