@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-Voice Navigation System - Main Orchestrator (FIXED)
---------------------------------------------
+Voice Navigation System - Main Orchestrator (POLISHED)
+------------------------------------------------------
 Real-time navigation assistance for visually impaired users.
 
-Fixed Issues:
-- Memory leak in main loop (frame cleanup + gc)
-- Missing frame validation
+Fixes Applied:
+- Memory leak (frame cleanup + gc)
+- Frame validation
 - Adaptive frame skipping
+
+Polish Applied:
+- Named constants, deque for latency, cached FPS
+- Zone overlay caching, scene cleanup, display frame cleanup
+- cv2 error handling, module init validation
+- Frame drop stats, auto crash recovery
 
 Pipeline: Camera → YOLO Detection → Safety Analysis → Scene Analysis → Audio Feedback
          Voice Input → AI Assistant → Audio Response
@@ -24,11 +30,15 @@ import os
 import sys
 import time
 import signal
+import math
+import traceback
 import yaml
 import cv2
-import gc  # FIX: Added for garbage collection
+import gc
+import numpy as np
 from pathlib import Path
 from typing import Optional
+from collections import deque
 
 # Resolve project root relative to this script (src/ -> voice_navigation/)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -59,6 +69,15 @@ class NavigationSystem:
     - ConversationHandler: Voice input processing (Phase 2)
     - AudioFeedback: Text-to-speech output
     """
+    
+    # Named constants (Issue 1.9)
+    LATENCY_PRINT_INTERVAL = 30       # Print latency every N frames
+    GC_INTERVAL_FRAMES = 1000         # Garbage collect every N frames
+    LATENCY_DECREASE_THRESHOLD = 0.7  # Decrease skip if latency < 70% target
+    MAX_FRAME_SKIP = 10               # Maximum adaptive frame skip
+    MIN_FRAME_SKIP = 1                # Minimum frame skip
+    LATENCY_WINDOW_SIZE = 10          # Rolling window for latency history
+    FPS_CACHE_INTERVAL = 30           # Cache FPS calculation every N frames
     
     def __init__(self, config_path: str = None):
         """Initialize the navigation system."""
@@ -96,16 +115,25 @@ class NavigationSystem:
         self._total_frames = 0
         self._total_detections = 0
         self._total_alerts = 0
+        self._frames_skipped = 0  # Issue 1.12: Track frame drops
         
-        # FIX: Adaptive frame skipping
+        # Adaptive frame skipping
         self._adaptive_skip = True
-        self._current_skip = 3  # Start with default
+        self._current_skip = 3
         self._target_latency_ms = 800
-        self._latency_history = []
+        self._latency_history = deque(maxlen=self.LATENCY_WINDOW_SIZE)  # Issue 1.5: deque
         
-        # FIX: Garbage collection tracking
-        self._gc_interval = 1000  # Collect every 1000 frames
+        # Garbage collection tracking
+        self._gc_interval = self.GC_INTERVAL_FRAMES
         self._last_gc_frame = 0
+        
+        # Issue 1.6: Cached FPS calculation
+        self._cached_elapsed = 0.0
+        self._cached_fps = 0.0
+        
+        # Issue 1.14: Cached zone overlay
+        self._zone_overlay = None
+        self._zone_overlay_size = (0, 0)
         
         # Register signal handler for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -177,37 +205,31 @@ class NavigationSystem:
         
         return True
     
-    # FIX: Added adaptive frame skip adjustment
     def _adjust_frame_skip(self, latency_ms: float) -> None:
         """
         Adjust frame skip based on recent latency.
-        
-        Args:
-            latency_ms: Latest processing latency
+        Uses deque with maxlen for efficient rolling window.
         """
         if not self._adaptive_skip:
             return
         
-        # Track latency history (last 10 frames)
+        # deque auto-truncates (Issue 1.5)
         self._latency_history.append(latency_ms)
-        if len(self._latency_history) > 10:
-            self._latency_history.pop(0)
         
-        # Calculate average latency
+        if len(self._latency_history) == 0:
+            return
+        
         avg_latency = sum(self._latency_history) / len(self._latency_history)
         
-        # Adjust skip based on performance
         if avg_latency > self._target_latency_ms:
-            # Too slow - skip more frames
-            self._current_skip = min(self._current_skip + 1, 10)
+            self._current_skip = min(self._current_skip + 1, self.MAX_FRAME_SKIP)
             if self._print_latency:
-                print(f"[Main] ⚠️ Latency high ({avg_latency:.0f}ms), increasing skip to {self._current_skip}")
+                print(f"[Main] ⚠️ Latency high ({avg_latency:.0f}ms), skip → {self._current_skip}")
         
-        elif avg_latency < self._target_latency_ms * 0.7:
-            # Fast enough - can process more frames
-            self._current_skip = max(self._current_skip - 1, 1)
+        elif avg_latency < self._target_latency_ms * self.LATENCY_DECREASE_THRESHOLD:
+            self._current_skip = max(self._current_skip - 1, self.MIN_FRAME_SKIP)
             if self._print_latency:
-                print(f"[Main] ✓ Latency good ({avg_latency:.0f}ms), decreasing skip to {self._current_skip}")
+                print(f"[Main] ✓ Latency good ({avg_latency:.0f}ms), skip → {self._current_skip}")
     
     def start(self) -> bool:
         """
@@ -219,6 +241,18 @@ class NavigationSystem:
         print("=" * 60)
         print("Voice Navigation System - Starting")
         print("=" * 60)
+        
+        # Issue 1.7: Validate config structure before init
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r') as f:
+                    config_check = yaml.safe_load(f) or {}
+                required_sections = ['camera', 'yolo', 'safety', 'audio']
+                missing = [s for s in required_sections if s not in config_check]
+                if missing:
+                    print(f"[Main] WARNING: Config missing sections: {missing} — using defaults")
+            except yaml.YAMLError as e:
+                print(f"[Main] WARNING: Config parse error: {e} — using defaults")
         
         try:
             # Initialize modules
@@ -358,16 +392,20 @@ class NavigationSystem:
                 self._frame_count += 1
                 self._total_frames += 1
                 
-                # FIX: Use adaptive frame skip
+                # Adaptive frame skip
                 if self._frame_count % self._current_skip != 0:
-                    # Still update display if enabled
-                    if self._show_video:
-                        cv2.imshow('Navigation System', frame_packet.data)
-                        if cv2.waitKey(1) & 0xFF == self._quit_key:
-                            print("[Main] Quit key pressed")
-                            break
+                    self._frames_skipped += 1  # Issue 1.12
                     
-                    # FIX: Release frame memory before skipping
+                    if self._show_video:
+                        try:
+                            cv2.imshow('Navigation System', frame_packet.data)
+                            if cv2.waitKey(1) & 0xFF == self._quit_key:
+                                print("[Main] Quit key pressed")
+                                break
+                        except cv2.error:
+                            print("[Main] Display error, switching to headless")
+                            self._show_video = False
+                    
                     del frame_packet.data
                     del frame_packet
                     continue
@@ -405,9 +443,9 @@ class NavigationSystem:
                     )
                     scene_time = (time.time() - scene_start) * 1000
                 
-                # Log telemetry (Phase 3)
+                # Log telemetry (Phase 3) — Issue 1.4: inline metrics
                 if self.telemetry is not None:
-                    metrics = LatencyMetrics(
+                    self.telemetry.log_latency(LatencyMetrics(
                         frame_id=frame_packet.frame_id,
                         timestamp=time.time(),
                         camera_ms=frame_packet.get_age(),
@@ -416,10 +454,8 @@ class NavigationSystem:
                         scene_ms=scene_time,
                         detection_count=detection_result.count,
                         alert_count=len(safety_result.alerts)
-                    )
-                    self.telemetry.log_latency(metrics)
+                    ))
                     
-                    # Log alerts
                     for alert in safety_result.alerts:
                         self.telemetry.log_alert(alert)
                 
@@ -437,14 +473,17 @@ class NavigationSystem:
                 # FIX: Adjust frame skip based on performance
                 self._adjust_frame_skip(total_time)
                 
-                # Print latency info
-                if self._print_latency and self._frame_count % 30 == 0:
-                    elapsed = time.time() - self._start_time
-                    actual_fps = self._total_frames / elapsed if elapsed > 0 else 0
+                # Print latency info — Issue 1.6: cache FPS
+                if self._frame_count % self.FPS_CACHE_INTERVAL == 0:
+                    self._cached_elapsed = time.time() - self._start_time
+                    self._cached_fps = (self._total_frames / self._cached_elapsed
+                                       if self._cached_elapsed > 0 else 0)
+                
+                if self._print_latency and self._frame_count % self.LATENCY_PRINT_INTERVAL == 0:
                     print(f"[Latency] Detection: {detection_time:.0f}ms | "
                           f"Safety: {safety_time:.0f}ms | "
                           f"Total: {total_time:.0f}ms | "
-                          f"FPS: {actual_fps:.1f} | "
+                          f"FPS: {self._cached_fps:.1f} | "
                           f"Skip: {self._current_skip}")
                 
                 # Print detections
@@ -460,69 +499,98 @@ class NavigationSystem:
                         detection_result,
                         safety_result
                     )
-                    cv2.imshow('Navigation System', display_frame)
                     
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == self._quit_key:
-                        print("[Main] Quit key pressed")
-                        break
-                    # Keyboard fallback for PTT (space bar)
-                    elif key == ord(' '):
-                        if self.conversation and self.conversation.is_running:
-                            print("[Main] Voice input triggered via keyboard fallback...")
+                    # Issue 1.3: Wrap cv2 calls in try/except
+                    try:
+                        cv2.imshow('Navigation System', display_frame)
+                        del display_frame  # Issue 1.2: Release immediately
+                        
+                        key = cv2.waitKey(1) & 0xFF
+                        if key == self._quit_key:
+                            print("[Main] Quit key pressed")
+                            break
+                        elif key == ord(' '):
+                            if self.conversation and self.conversation.is_running:
+                                print("[Main] Voice input triggered via keyboard fallback...")
+                    except cv2.error as e:
+                        print(f"[Main] Display error: {e}, switching to headless")
+                        self._show_video = False
+                        try:
+                            cv2.destroyAllWindows()
+                        except:
+                            pass
                 
-                # FIX: CRITICAL - Release frame memory
+                # Issue 1.1: Clear scene tracking data (keeps summary only)
+                if self._latest_scene is not None and hasattr(self._latest_scene, 'tracked_objects'):
+                    self._latest_scene.tracked_objects.clear()
+                
+                # Release frame memory
                 del frame_packet.data
                 del detection_result
                 del safety_result
                 del frame_packet
                 
-                # FIX: Periodic garbage collection
+                # Periodic garbage collection
                 if self._frame_count - self._last_gc_frame >= self._gc_interval:
                     gc.collect()
                     self._last_gc_frame = self._frame_count
                 
             except Exception as e:
                 print(f"[Main] ERROR in main loop: {e}")
-                import traceback
                 traceback.print_exc()
+                
+                # Log to telemetry if available
+                if self.telemetry:
+                    self.telemetry.log_error(str(e), traceback.format_exc())
                 
                 self._error_count += 1
                 if self._error_count >= self._max_errors:
-                    print(f"[Main] Too many errors, stopping")
+                    print(f"[Main] Too many errors ({self._max_errors}), stopping")
                     break
         
         self.stop()
+    
+    def _get_zone_overlay(self, width: int, height: int) -> np.ndarray:
+        """Get cached zone overlay (Issue 1.14)."""
+        if self._zone_overlay is None or self._zone_overlay_size != (width, height):
+            overlay = np.zeros((height, width, 3), dtype=np.uint8)
+            
+            left_line = int(width * 0.3)
+            right_line = int(width * 0.7)
+            cv2.line(overlay, (left_line, 0), (left_line, height), (100, 100, 100), 1)
+            cv2.line(overlay, (right_line, 0), (right_line, height), (100, 100, 100), 1)
+            
+            cv2.putText(overlay, "LEFT", (10, height - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
+            cv2.putText(overlay, "CENTER", (width//2 - 30, height - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
+            cv2.putText(overlay, "RIGHT", (width - 60, height - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
+            
+            self._zone_overlay = overlay
+            self._zone_overlay_size = (width, height)
+        
+        return self._zone_overlay
     
     def _draw_overlay(self, frame, detection_result, safety_result) -> any:
         """Draw debug overlay on frame."""
         display = frame.copy()
         height, width = display.shape[:2]
         
-        # Draw zone lines
+        # Issue 1.14: Use cached zone overlay
         if self._show_zones:
-            left_line = int(width * 0.3)
-            right_line = int(width * 0.7)
-            cv2.line(display, (left_line, 0), (left_line, height), (100, 100, 100), 1)
-            cv2.line(display, (right_line, 0), (right_line, height), (100, 100, 100), 1)
-            
-            # Zone labels
-            cv2.putText(display, "LEFT", (10, height - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
-            cv2.putText(display, "CENTER", (width//2 - 30, height - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
-            cv2.putText(display, "RIGHT", (width - 60, height - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
+            zone_overlay = self._get_zone_overlay(width, height)
+            mask = zone_overlay > 0
+            display[mask] = zone_overlay[mask]
         
         # Draw bounding boxes with danger colors
         if self._show_bboxes:
             danger_colors = {
-                'critical': (0, 0, 255),   # Red
-                'warning': (0, 165, 255),  # Orange
-                'info': (0, 255, 0)        # Green
+                'critical': (0, 0, 255),
+                'warning': (0, 165, 255),
+                'info': (0, 255, 0)
             }
             
-            # Draw all detections in gray first (thin boxes)
             for det in detection_result.detections:
                 x1, y1, x2, y2 = det.bbox
                 cv2.rectangle(display, (x1, y1), (x2, y2), (128, 128, 128), 1)
@@ -530,7 +598,6 @@ class NavigationSystem:
                 cv2.putText(display, label, (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (128, 128, 128), 1)
             
-            # Overdraw alerts with danger colors (thicker boxes)
             for alert in safety_result.alerts:
                 x1, y1, x2, y2 = alert.bbox
                 color = danger_colors.get(alert.danger_level, (0, 255, 0))
@@ -540,15 +607,12 @@ class NavigationSystem:
                 cv2.putText(display, label, (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
-        # Draw FPS
+        # Issue 1.6: Use cached FPS
         if self._show_fps:
-            elapsed = time.time() - self._start_time
-            fps = self._total_frames / elapsed if elapsed > 0 else 0
-            fps_text = f"FPS: {fps:.1f} | Frame: {self._frame_count} | Skip: {self._current_skip}"
+            fps_text = f"FPS: {self._cached_fps:.1f} | Frame: {self._frame_count} | Skip: {self._current_skip}"
             cv2.putText(display, fps_text, (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # Draw alert summary
         alert_text = (f"Alerts: {len(safety_result.alerts)} "
                      f"(C:{safety_result.critical_count} "
                      f"W:{safety_result.warning_count} "
@@ -571,6 +635,12 @@ class NavigationSystem:
         print(f"  Total detections: {self._total_detections}")
         print(f"  Total alerts: {self._total_alerts}")
         
+        # Issue 1.12: Frame drop stats
+        if self._total_frames > 0:
+            skip_rate = (self._frames_skipped / 
+                        (self._total_frames + self._frames_skipped) * 100)
+            print(f"  Frames skipped: {self._frames_skipped} ({skip_rate:.1f}%)")
+        
         if self.detector:
             det_stats = self.detector.get_stats()
             print(f"  Avg inference time: {det_stats['avg_inference_time_ms']:.1f}ms")
@@ -585,6 +655,30 @@ class NavigationSystem:
             print(f"  Interrupted: {audio_stats['interrupted_count']}")
         
         print("=" * 60)
+    
+    def run_with_restart(self, max_restarts: int = 3) -> None:
+        """Run with automatic restart on crash (Issue 1.16)."""
+        restart_count = 0
+        
+        while restart_count < max_restarts:
+            try:
+                self.run()
+                break  # Normal exit
+            except Exception as e:
+                restart_count += 1
+                print(f"\n[Main] CRASH: {e}")
+                print(f"[Main] Restart {restart_count}/{max_restarts} in 5 seconds...")
+                
+                try:
+                    self.stop()
+                except:
+                    pass
+                
+                time.sleep(5)
+                
+                if restart_count >= max_restarts:
+                    print("[Main] Max restarts reached, giving up")
+                    raise
 
 
 def main():

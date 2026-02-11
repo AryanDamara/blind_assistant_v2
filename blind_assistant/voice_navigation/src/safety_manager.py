@@ -1,24 +1,25 @@
 """
-Safety Manager Module
----------------------
+Safety Manager Module (POLISHED)
+-------------------------------
 Analyzes detections for navigation safety.
 
 Features:
-- Zone detection (left/center/right)
-- Distance estimation (bounding box method with fallback)
+- Zone detection (left/center/right) with pre-calculated boundaries
+- Distance estimation (bounding box method with fallback + confidence adjustment)
 - Danger level classification (critical/warning/info)
 - Voice profile assignment for audio feedback
 - Priority calculation (additive: base + object boost + zone boost)
-- Alert deduplication (class + zone within time window)
+- Alert deduplication (dict-based O(1) lookup)
 - Filters out ignore_classes
+- Float validation (isfinite checks)
 """
 
 import time
+import math
 import yaml
 import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
-from collections import deque
 
 
 @dataclass
@@ -130,6 +131,10 @@ class SafetyAnalysisResult:
             'analysis_time_ms': round(self.analysis_time_ms, 2),
             'alerts': [a.to_dict() for a in self.alerts]
         }
+    
+    def clear_alerts(self) -> None:
+        """Clear alerts to free memory (Issue 3.6)."""
+        self.alerts.clear()
 
 
 class SafetyManager:
@@ -148,8 +153,10 @@ class SafetyManager:
         """Initialize safety manager with configuration."""
         self._load_config(config_path)
         
-        # Alert history for deduplication
-        self._alert_history: deque = deque(maxlen=50)
+        # Issue 3.2: Dict-based alert history for O(1) lookup
+        self._alert_history: Dict[str, Dict] = {}
+        self._last_history_cleanup: float = time.time()
+        self._history_cleanup_interval: float = 5.0
         
         # Statistics
         self._total_alerts: int = 0
@@ -253,50 +260,38 @@ class SafetyManager:
         else:
             return 'center'
     
-    def _estimate_distance(self, class_name: str, bbox_height: int) -> Tuple[float, str]:
+    def _estimate_distance(self, class_name: str, bbox_height: int,
+                          confidence: float = 1.0) -> Tuple[float, str]:
         """
-        Estimate distance using bounding box height (FIXED).
+        Estimate distance using bounding box height.
         
         Formula: distance = (real_height × ref_distance × ref_bbox_height) / current_bbox_height
         
-        FIX: Added comprehensive input validation to prevent division by zero.
-        
-        Args:
-            class_name: Object class for calibration lookup
-            bbox_height: Current bounding box height in pixels
-            
-        Returns:
-            (distance_m, quality) where quality is 'calibrated' or 'estimated'
+        Includes input validation, float checks, and confidence-based adjustment.
         """
-        # FIX: Validate input range
+        # Validate input range
         if bbox_height <= 0 or bbox_height > 10000:
             return (self._max_distance, 'estimated')
+        
+        distance = self._max_distance
+        quality = 'estimated'
         
         # Check for calibrated reference
         if class_name in self._reference_objects:
             ref = self._reference_objects[class_name]
             
-            # FIX: Validate reference values before division
             if (ref.get('height_m', 0) <= 0 or 
                 ref.get('ref_bbox_height', 0) <= 0 or
                 ref.get('ref_distance_m', 0) <= 0):
                 print(f"[SafetyManager] WARNING: Invalid reference for {class_name}")
-                # Fall through to fallback
             else:
-                # Safe calculation
                 numerator = (ref['height_m'] * 
                             ref['ref_distance_m'] * 
                             ref['ref_bbox_height'])
                 distance = numerator / bbox_height
-                
-                return (
-                    round(max(self._min_distance, min(distance, self._max_distance)), 1),
-                    'calibrated'
-                )
-        
-        # Use fallback estimation
-        if self._fallback_enabled:
-            # FIX: Validate fallback values before division
+                quality = 'calibrated'
+        elif self._fallback_enabled:
+            # Fallback estimation
             if (self._fallback_height_m > 0 and 
                 self._fallback_ref_bbox > 0 and
                 self._fallback_ref_distance > 0):
@@ -305,14 +300,18 @@ class SafetyManager:
                             self._fallback_ref_distance * 
                             self._fallback_ref_bbox)
                 distance = numerator / bbox_height
-                
-                return (
-                    round(max(self._min_distance, min(distance, self._max_distance)), 1),
-                    'estimated'
-                )
         
-        # Ultimate fallback
-        return (self._max_distance, 'estimated')
+        # Float validation (Issue H-1)
+        if not math.isfinite(distance):
+            return (self._max_distance, 'estimated')
+        
+        # Issue 3.4: Confidence-based distance adjustment
+        if confidence < 0.7:
+            distance *= 1.2  # Add 20% uncertainty margin
+            quality = 'estimated'
+        
+        clamped = max(self._min_distance, min(distance, self._max_distance))
+        return (round(clamped, 1), quality)
     
     def _calculate_danger_level(self, distance_m: float, zone: str) -> Tuple[str, int, str]:
         """
@@ -379,47 +378,41 @@ class SafetyManager:
     
     def _is_duplicate(self, alert_key: str, danger_level: str, current_time: float) -> bool:
         """
-        Check if this alert was recently announced.
-        
+        Check if this alert was recently announced (Issue 3.2: O(1) dict lookup).
         Allows escalation (danger level increase) even within dedup window.
-        
-        Args:
-            alert_key: class_zone combination
-            danger_level: Current danger level
-            current_time: Current timestamp
-            
-        Returns:
-            True if duplicate (should skip), False if new or escalated
         """
-        danger_order = {'info': 1, 'warning': 2, 'critical': 3}
+        # Periodic cleanup
+        if current_time - self._last_history_cleanup > self._history_cleanup_interval:
+            self._cleanup_alert_history(current_time)
+            self._last_history_cleanup = current_time
         
-        for prev in self._alert_history:
-            if prev['key'] == alert_key:
-                time_diff = current_time - prev['time']
-                
-                if time_diff < self._dedup_window_sec:
-                    # Within window - check for escalation
-                    if danger_order.get(danger_level, 0) > danger_order.get(prev['danger_level'], 0):
-                        return False  # Escalation - not duplicate
-                    return True  # Same or lower level - duplicate
+        if alert_key in self._alert_history:
+            prev = self._alert_history[alert_key]
+            time_diff = current_time - prev['time']
+            
+            if time_diff < self._dedup_window_sec:
+                danger_order = {'info': 1, 'warning': 2, 'critical': 3}
+                if danger_order.get(danger_level, 0) > danger_order.get(prev['danger_level'], 0):
+                    return False  # Escalation
+                return True  # Duplicate
         
-        return False  # Not found in history
+        return False
+    
+    def _cleanup_alert_history(self, current_time: float) -> None:
+        """Remove expired entries from alert history."""
+        expired = [
+            key for key, data in self._alert_history.items()
+            if current_time - data['time'] > self._dedup_window_sec * 2
+        ]
+        for key in expired:
+            del self._alert_history[key]
     
     def _add_to_history(self, alert_key: str, danger_level: str, current_time: float) -> None:
-        """Add/update alert in history for deduplication."""
-        # Update existing entry if found (more efficient than rebuilding)
-        for alert in self._alert_history:
-            if alert['key'] == alert_key:
-                alert['danger_level'] = danger_level
-                alert['time'] = current_time
-                return
-        
-        # Not found - add new entry
-        self._alert_history.append({
-            'key': alert_key,
+        """Add/update alert in history (O(1) insert)."""
+        self._alert_history[alert_key] = {
             'danger_level': danger_level,
             'time': current_time
-        })
+        }
     
     def analyze(self, detections: List, frame_width: int, frame_id: int = 0) -> SafetyAnalysisResult:
         """
@@ -454,6 +447,10 @@ class SafetyManager:
         filtered_count = 0
         dedup_count = 0
         
+        # Issue 3.3: Pre-calculate zone boundaries once
+        left_boundary = int(frame_width * self._zones['center'][0])
+        right_boundary = int(frame_width * self._zones['center'][1])
+        
         for det in detections:
             # Get detection attributes (handle both Detection objects and dicts)
             if hasattr(det, 'class_name'):
@@ -463,14 +460,12 @@ class SafetyManager:
                 bbox_center = det.bbox_center
                 bbox_height = det.bbox_height
             else:
-                # Dict format - safer extraction
                 class_name = det.get('class_name') or det.get('class', 'unknown')
                 confidence = det.get('confidence', 0.0)
                 bbox = tuple(det.get('bbox', [0, 0, 0, 0]))
                 bbox_center = tuple(det.get('bbox_center', [0, 0]))
                 bbox_height = det.get('bbox_height', 0)
                 
-                # Skip if critical fields missing
                 if class_name == 'unknown' or bbox_height == 0:
                     continue
             
@@ -480,11 +475,19 @@ class SafetyManager:
             
             filtered_count += 1
             
-            # Calculate zone
-            zone = self._calculate_zone(bbox_center[0], frame_width)
+            # Issue 3.3: Fast zone calculation with pre-calculated boundaries
+            center_x = bbox_center[0]
+            if center_x < left_boundary:
+                zone = 'left'
+            elif center_x > right_boundary:
+                zone = 'right'
+            else:
+                zone = 'center'
             
-            # Estimate distance
-            distance_m, distance_quality = self._estimate_distance(class_name, bbox_height)
+            # Estimate distance (Issue 3.4: pass confidence)
+            distance_m, distance_quality = self._estimate_distance(
+                class_name, bbox_height, confidence=confidence
+            )
             
             # Calculate danger level and voice profile
             danger_level, base_priority, voice_profile = self._calculate_danger_level(distance_m, zone)

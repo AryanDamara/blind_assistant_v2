@@ -1,20 +1,21 @@
 """
-Audio Feedback Module (FIXED)
----------------------
+Audio Feedback Module (POLISHED)
+------------------------------
 Text-to-speech audio output for navigation alerts.
 
-Fixed Issues:
+Fixes Applied:
 - Race condition in _speak_item (thread safety)
-- No audio device validation
-- Better queue overflow handling
+- TTS engine fallback
+- Priority queue overflow handling
 
-Features:
-- pyttsx3 TTS engine with fallback
-- Priority queue for speech (higher priority speaks first)
-- Interrupt on critical alerts
-- Voice profiles (urgent/alert/calm)
-- Thread-safe state management
-- Non-blocking speech in background thread
+Polish Applied:
+- TTS timeout (sub-thread prevents hang)
+- Stale queue cleanup
+- Rate limiting for announcements
+- Audio device error detection
+- Duplicate alert text dedup
+- Text length validation
+- Thread stop deadlock hardening
 """
 
 import time
@@ -91,6 +92,17 @@ class AudioFeedback:
         self._total_announcements: int = 0
         self._interrupted_count: int = 0
         self._queue_drops: int = 0
+        
+        # Issue 2.3: Rate limiting
+        self._last_announcement_time: float = 0.0
+        self._min_announcement_interval: float = 0.5  # 500ms minimum
+        
+        # Issue 2.5: Audio device error tracking
+        self._consecutive_speak_errors: int = 0
+        self._max_speak_errors: int = 5
+        
+        # Issue 2.11: Max text length
+        self.MAX_SPEECH_LENGTH: int = 500
     
     def _load_config(self, config_path: str) -> None:
         """Load audio settings from YAML config."""
@@ -203,15 +215,24 @@ class AudioFeedback:
         """Main speech loop running in background thread."""
         print("[AudioFeedback] Speech thread started")
         
+        last_cleanup = time.time()
+        cleanup_interval = 10.0  # Issue 2.2: Clean stale items every 10s
+        
         while not self._stop_event.is_set():
             try:
-                # Get next item from queue (with timeout for responsive shutdown)
+                # Issue 2.2: Periodic stale queue cleanup
+                now = time.time()
+                if now - last_cleanup > cleanup_interval:
+                    self._cleanup_stale_queue()
+                    last_cleanup = now
+                
+                # Get next item from queue
                 try:
                     item: SpeechItem = self._speech_queue.get(timeout=0.5)
                 except queue.Empty:
                     continue
                 
-                # Check if item is stale (queued > 5 seconds ago)
+                # Check if item is stale
                 age = time.time() - item.timestamp
                 if age > 5.0:
                     print(f"[AudioFeedback] Dropping stale speech: {item.text[:30]}...")
@@ -226,34 +247,78 @@ class AudioFeedback:
         
         print("[AudioFeedback] Speech thread stopped")
     
-    # FIX: Thread-safe speech with lock
+    def _cleanup_stale_queue(self) -> None:
+        """Remove stale items from queue (Issue 2.2)."""
+        fresh_items = []
+        current_time = time.time()
+        
+        while not self._speech_queue.empty():
+            try:
+                item = self._speech_queue.get_nowait()
+                if current_time - item.timestamp < 5.0:
+                    fresh_items.append(item)
+                else:
+                    self._queue_drops += 1
+            except queue.Empty:
+                break
+        
+        for item in fresh_items:
+            try:
+                self._speech_queue.put_nowait(item)
+            except queue.Full:
+                break
+    
     def _speak_item(self, item: SpeechItem) -> None:
-        """Speak a single item (thread-safe)."""
+        """Speak a single item with timeout protection (Issue 2.1)."""
         if self._engine is None or not self._enabled:
             return
         
         try:
-            # FIX: Set speaking flag with lock BEFORE starting
             with self._speech_lock:
                 self._is_speaking = True
                 self._current_text = item.text
             
-            # Apply voice profile
             self._apply_voice_profile(item.voice_profile)
             
-            # Speak (this blocks until done or interrupted)
-            self._engine.say(item.text)
-            self._engine.runAndWait()
+            # Issue 2.1: Speak in sub-thread with timeout
+            def _do_speak():
+                try:
+                    self._engine.say(item.text)
+                    self._engine.runAndWait()
+                except Exception:
+                    pass
             
-            # FIX: Update stats with lock
-            with self._speech_lock:
-                self._total_announcements += 1
+            speak_thread = threading.Thread(target=_do_speak, daemon=True)
+            speak_thread.start()
+            speak_thread.join(timeout=10.0)  # 10s max per utterance
             
+            if speak_thread.is_alive():
+                print(f"[AudioFeedback] WARNING: Speech timeout, skipping: {item.text[:30]}...")
+                try:
+                    self._engine.stop()
+                except:
+                    pass
+                self._consecutive_speak_errors += 1
+            else:
+                with self._speech_lock:
+                    self._total_announcements += 1
+                self._consecutive_speak_errors = 0
+            
+            # Issue 2.5: Check for repeated failures (audio device issue)
+            if self._consecutive_speak_errors >= self._max_speak_errors:
+                print("[AudioFeedback] WARNING: Too many speech errors, possible audio device issue")
+                self._consecutive_speak_errors = 0
+                # Try reinitializing
+                try:
+                    self._engine.stop()
+                    self._init_engine()
+                except:
+                    pass
+        
         except Exception as e:
             print(f"[AudioFeedback] ERROR speaking: {e}")
         
         finally:
-            # FIX: Clear speaking flag with lock AFTER done
             with self._speech_lock:
                 self._is_speaking = False
                 self._current_text = ""
@@ -305,9 +370,18 @@ class AudioFeedback:
         self._stop_event.set()
         self._running = False
         
-        # Wait for thread
+        # Issue: Thread deadlock hardening
         if self._speech_thread is not None:
             self._speech_thread.join(timeout=2.0)
+            if self._speech_thread.is_alive():
+                print("[AudioFeedback] WARNING: Speech thread still alive after timeout")
+                # Force engine stop to unblock thread
+                try:
+                    if self._engine:
+                        self._engine.stop()
+                except:
+                    pass
+                self._speech_thread.join(timeout=1.0)
             self._speech_thread = None
         
         # Cleanup engine
@@ -346,6 +420,11 @@ class AudioFeedback:
         """
         if not self._enabled:
             return False
+        
+        # Issue 2.11: Truncate long text
+        if len(text) > self.MAX_SPEECH_LENGTH:
+            text = text[:self.MAX_SPEECH_LENGTH] + "... truncated"
+            print(f"[AudioFeedback] WARNING: Truncated long message")
         
         # Handle critical interruption
         if self._interrupt_on_critical and priority >= self.CRITICAL_PRIORITY_THRESHOLD:
@@ -431,17 +510,28 @@ class AudioFeedback:
         if not self._enabled or not alerts:
             return 0
         
+        # Issue 2.3: Rate limiting
+        current_time = time.time()
+        if current_time - self._last_announcement_time < self._min_announcement_interval:
+            return 0
+        self._last_announcement_time = current_time
+        
         # Take top N alerts
         alerts_to_announce = alerts[:self._max_alerts_per_cycle]
         announced = 0
+        announced_texts = set()  # Issue 2.8: Dedup
         
         for alert in alerts_to_announce:
             # Get announcement text
             if hasattr(alert, 'get_announcement'):
                 text = alert.get_announcement(self._verbosity)
             else:
-                # Dict fallback
                 text = f"{alert.get('class_name', 'object')} {alert.get('zone', 'ahead')}"
+            
+            # Issue 2.8: Skip duplicate text
+            if text in announced_texts:
+                continue
+            announced_texts.add(text)
             
             # Get priority, voice profile, and danger level
             if hasattr(alert, 'priority'):
@@ -455,9 +545,8 @@ class AudioFeedback:
             
             # Check danger_level for critical interruption
             if danger_level == 'critical' and self._interrupt_on_critical:
-                # Use very high priority to ensure interruption
                 priority = 100
-                text = f"Caution! {text}"  # Add emphasis
+                text = f"Caution! {text}"
             
             # Queue the announcement
             if self.speak(text, priority=priority, voice_profile=voice_profile):
