@@ -1,0 +1,282 @@
+# ============================================
+# CAMERA CONFIGURATION
+# ============================================
+camera:
+  source: 0
+  backend: "avfoundation"
+  width: 640
+  height: 480
+  fps: 30
+  buffer_size: 2                 # Queue size (2 = keep only latest frames)
+  frame_skip: 3                  # Process every Nth frame (10 FPS effective)
+  
+  # Auto-restart on failure
+  auto_restart: true
+  restart_delay_sec: 2.0
+  
+  # Warmup (some cameras need a few frames to adjust exposure)
+  warmup_frames: 10
+  
+  # Video file looping (when source is a video file)
+  loop_video: true               # Loop video when reaching end
+
+# ============================================
+# YOLO DETECTION
+# ============================================
+yolo:
+  model_path: "models/yolo/yolov8n.pt"
+  confidence_threshold: 0.5      # Min confidence to report detection
+  iou_threshold: 0.45            # Non-max suppression threshold
+  device: "cpu"                  # "cpu" or "cuda" (if GPU available)
+  max_detections: 10             # Max objects per frame
+  img_size: 640                  # Input size for YOLO (must match width)
+  
+  # Classes to detect (empty = all 80 COCO classes)
+  # Leave empty initially, filter later if needed
+  allowed_classes: []
+
+# ============================================
+# SAFETY MANAGEMENT
+# ============================================
+safety:
+  # Classes to ignore (not relevant for navigation)
+  ignore_classes:
+    - tv
+    - laptop
+    - remote
+    - book
+    - cell phone
+    - clock
+    - keyboard
+    - mouse
+  
+  # Danger level thresholds
+  danger_levels:
+    critical:
+      distance_m: 1.0            # < 1m = stop immediately
+      priority: 5
+      voice_profile: "urgent"
+      
+    warning:
+      distance_m: 2.5            # 1-2.5m = caution
+      priority: 3
+      voice_profile: "alert"
+      
+    info:
+      distance_m: 5.0            # 2.5-5m = awareness
+      priority: 1
+      voice_profile: "calm"
+  
+  # Spatial zones (% of frame width)
+  zones:
+    center: [0.3, 0.7]           # 30-70% = critical path
+    left: [0.0, 0.3]
+    right: [0.7, 1.0]
+  
+  # Alert deduplication
+  deduplication_window_sec: 3.0  # Don't repeat same alert within 3 sec
+  
+  # Center zone sensitivity (lower = more sensitive)
+  center_zone_multiplier: 0.8    # 20% more sensitive for center zone
+  
+  # Priority boost for certain objects
+  priority_boost:
+    car: 20
+    truck: 20
+    bus: 20
+    motorcycle: 15
+    person: 10
+    bicycle: 10
+
+# ============================================
+# DISTANCE ESTIMATION (Bounding Box Method)
+# ============================================
+distance:
+  method: "bbox"                 # "bbox" or "midas" (future)
+  
+  # Calibration data (measure these for your camera!)
+  # Format: {real_height_m, ref_bbox_height_px, ref_distance_m}
+  reference_objects:
+    person:
+      height_m: 1.7
+      ref_bbox_height: 400       # Bbox height at ref_distance
+      ref_distance_m: 2.0        # Calibration distance
+    
+    chair:
+      height_m: 0.9
+      ref_bbox_height: 200
+      ref_distance_m: 2.0
+    
+    car:
+      height_m: 1.5
+      ref_bbox_height: 500
+      ref_distance_m: 5.0
+    
+    # Add more objects as you calibrate
+  
+  # Fallback for uncalibrated objects
+  fallback:
+    enabled: true
+    estimated_height_m: 1.0      # Assume ~1m tall for unknown objects
+    ref_bbox_height: 200         # Generic calibration at 2m
+    ref_distance_m: 2.0
+
+# ============================================
+# SCENE ANALYSIS
+# ============================================
+scene:
+  tracking_enabled: true
+  history_seconds: 5             # Track objects for 5 seconds
+  history_frames: 50             # At 10 FPS = 5 seconds
+  
+  # Movement detection
+  min_movement_threshold_px: 10  # Min pixels to consider "moving"
+  
+  # Spatial grouping
+  grouping_enabled: true
+  grouping_distance_px: 100      # Objects within 100px = "cluster"
+
+# ============================================
+# LLM ASSISTANT
+# ============================================
+llm:
+  enabled: true                  # Can disable for testing
+  model: "llama3.2:3b"          # Ollama model name
+  temperature: 0.7
+  max_tokens: 100
+  timeout_sec: 2.0
+  
+  # Response caching
+  cache:
+    enabled: true
+    max_entries: 100
+    ttl_seconds: 300             # Cache for 5 minutes
+  
+  # When to invoke LLM (vs rule-based)
+  invoke_conditions:
+    min_objects: 2               # Only if 2+ objects detected
+    complex_scene: true          # If objects in multiple zones
+    on_user_query: true          # Always for voice commands
+
+# ============================================
+# AUDIO FEEDBACK
+# ============================================
+audio:
+  enabled: true
+  engine: "pyttsx3"              # TTS engine
+  
+  # Voice profiles for different alert types
+  # NOTE: pyttsx3 only supports rate and volume reliably (pitch is platform-dependent)
+  voice_profiles:
+    urgent:                      # For critical alerts (< 1m)
+      rate: 200                  # Faster = more urgent
+      volume: 1.0
+      
+    alert:                       # For warnings (1-2.5m)
+      rate: 175
+      volume: 0.9
+      
+    calm:                        # For info (> 2.5m)
+      rate: 150                  # Slower = calmer
+      volume: 0.8
+  
+  # Verbosity levels
+  verbosity: "standard"          # "minimal" | "standard" | "detailed"
+  
+  # Interrupt mode
+  interrupt_on_critical: true    # Stop current speech for critical alerts
+  
+  # Max alerts to announce per detection cycle
+  max_alerts_per_cycle: 3        # Top N alerts by priority
+  
+  # Voice selection (try different indices)
+  voice_index: 0                 # 0 = default system voice
+
+# ============================================
+# VOICE INPUT (Phase 2)
+# ============================================
+voice_input:
+  enabled: true                  # Enable in Phase 2
+  activation_mode: "push_to_talk" # "push_to_talk" | "always_listening"
+  activation_key: "space"
+  timeout_sec: 5.0
+  phrase_time_limit: 10.0        # Max phrase length in seconds
+  
+  # Microphone settings
+  mic_index: null                # null = default mic
+  energy_threshold: 4000         # Speech detection sensitivity
+
+# ============================================
+# TELEMETRY & LOGGING
+# ============================================
+telemetry:
+  enabled: true
+  log_directory: "data/logs"
+  log_level: "INFO"              # "DEBUG" | "INFO" | "WARNING" | "ERROR"
+  
+  # What to log
+  log_frames: false              # Don't save frame images (large files)
+  log_detections: true
+  log_latency: true
+  log_alerts: true
+  log_llm_responses: true
+  
+  # Performance monitoring
+  performance_warning_threshold_ms: 1000  # Warn if latency > 1 sec
+  
+  # Session management
+  new_session_on_start: true     # Create new log file per run
+
+# ============================================
+# PERFORMANCE TUNING
+# ============================================
+performance:
+  # Thread priorities (experimental - may not work on all platforms)
+  # Requires admin/root on some systems (Linux/Unix only)
+  enable_thread_priority: false  # Disabled by default
+  thread_priority:
+    camera: -5                   # Highest priority
+    detection: 0
+    audio: -3
+    voice_input: 5
+  
+  # Adaptive frame skipping (future feature)
+  adaptive_skip: false
+  target_latency_ms: 500
+  
+  # Memory limits
+  max_memory_mb: 2048
+
+# ============================================
+# DEBUG & DEVELOPMENT
+# ============================================
+debug:
+  # Visual debugging
+  show_video: true               # Display camera feed
+  show_bboxes: true              # Draw detection boxes
+  show_zones: true               # Draw left/center/right zones
+  show_fps: true                 # Display FPS counter
+  
+  # Console output
+  print_latency: true            # Print latency breakdown
+  print_detections: true         # Print detected objects
+  print_alerts: false            # Print audio alerts (can be verbose)
+  
+  # Performance profiling
+  enable_profiler: false         # CPU profiling (slows down system)
+  
+  # Mock mode (for testing without camera)
+  mock_camera: false
+  mock_video_path: "data/test_scenarios/crowded_hallway.mp4"
+
+# ============================================
+# SYSTEM
+# ============================================
+system:
+  # Graceful shutdown
+  shutdown_timeout_sec: 5.0
+  quit_key: 'q'                  # Keyboard key to quit application
+  
+  # Error handling
+  max_consecutive_errors: 10     # Stop after N consecutive errors
+  error_recovery_mode: "restart" # "restart" | "continue" | "stop"
