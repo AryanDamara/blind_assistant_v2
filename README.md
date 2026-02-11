@@ -1,1 +1,0 @@
-# blind_assistant_v2

@@ -1,0 +1,94 @@
+# ===============================
+# Python cache
+# ===============================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Compiled / binary Python files
+*.so
+*.pyd
+*.dll
+
+# ===============================
+# Packaging / build
+# ===============================
+build/
+dist/
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+
+# ===============================
+# Virtual environments
+# ===============================
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ===============================
+# OS junk
+# ===============================
+.DS_Store
+Thumbs.db
+
+# ===============================
+# IDE / Editor
+# ===============================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.iml
+
+# ===============================
+# Logs
+# ===============================
+*.log
+logs/
+data/logs/
+
+# ===============================
+# Large ML model files
+# ===============================
+*.pt
+*.onnx
+*.engine
+models/yolo/
+models/llm/
+
+# ===============================
+# Large data / test videos
+# ===============================
+*.mp4
+*.avi
+*.mov
+data/sample_frames/
+data/test_scenarios/
+
+# ===============================
+# Local config (keep example only)
+# ===============================
+config/settings.yaml
+config/settings_v2.yaml
+
+# ===============================
+# Jupyter
+# ===============================
+.ipynb_checkpoints/
+*.ipynb
+
+# ===============================
+# Ollama / local LLM cache
+# ===============================
+.ollama/
+ollama/
+Library/Caches/Ultralytics/
+
+# ===============================
+# Misc
+# ===============================
+.gemini/
+.antigravity/
