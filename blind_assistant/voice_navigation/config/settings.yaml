@@ -248,6 +248,102 @@ performance:
   max_memory_mb: 2048
 
 # ============================================
+# STAIR DETECTION (Enhanced)
+# ============================================
+stair_detection:
+  enabled: true
+  gradient_threshold: 0.08
+  min_stair_edges: 3
+  min_row_coverage: 0.25
+  max_step_spacing_px: 80
+  min_step_spacing_px: 8
+  cooldown_sec: 5.0
+  analyze_region: [0.3, 1.0]
+  # Enhanced features
+  use_edge_fusion: true
+  use_temporal_tracking: true
+  min_temporal_consistency: 2
+  detect_landings: true
+  estimate_step_height: true
+  estimate_distance: true
+  infer_handrail: true
+  min_safe_distance_m: 1.5
+  max_safe_step_height_cm: 22
+  min_safety_score: 0.5
+
+# ============================================
+# TRAFFIC LIGHT DETECTION
+# ============================================
+traffic_light_detection:
+  enabled: true
+  min_confidence: 0.6
+  cooldown_sec: 2.0
+  detect_pedestrian: true
+  detect_flashing: true
+  temporal_smoothing: true
+  brightness_normalization: true
+  min_distance_m: 5.0
+  max_distance_m: 30.0
+
+# ============================================
+# CROSSWALK DETECTION
+# ============================================
+crosswalk_detection:
+  enabled: true
+  min_confidence: 0.6
+  min_parallel_lines: 4
+  cooldown_sec: 3.0
+  use_temporal_tracking: true
+  min_temporal_consistency: 2
+  validate_context: true
+
+# ============================================
+# CURB DETECTION
+# ============================================
+curb_detection:
+  enabled: true
+  min_gradient: 0.05
+  min_curb_height_cm: 5.0
+  cooldown_sec: 2.0
+  filter_shadows: true
+  detect_direction: true
+  filter_ramps: true
+  use_temporal_tracking: true
+  min_temporal_consistency: 2
+
+# ============================================
+# DOOR DETECTION
+# ============================================
+door_detection:
+  enabled: true
+  detect_glass_doors: true
+  detect_automatic: true
+  improved_handle_detection: true
+  detect_revolving: false
+  cooldown_sec: 3.0
+
+# ============================================
+# RETAIL DETECTION
+# ============================================
+retail_detection:
+  enabled: false              # Enable only in shopping mode
+  detect_aisles: true
+  detect_checkouts: true
+  detect_carts: true
+  cooldown_sec: 5.0
+
+# ============================================
+# TACTILE PAVING DETECTION
+# ============================================
+tactile_paving_detection:
+  enabled: true
+  cooldown_sec: 5.0
+  variance_threshold: 300.0
+  classify_type: true
+  validate_pattern: true
+  extract_direction: true
+
+# ============================================
 # DEBUG & DEVELOPMENT
 # ============================================
 debug:

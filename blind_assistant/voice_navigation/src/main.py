@@ -55,6 +55,15 @@ from ai_assistant import AIAssistant
 from conversation_handler import ConversationHandler
 from telemetry import TelemetryLogger, LatencyMetrics
 
+# Navigation detectors
+from stair_detector import StairDetector
+from traffic_light_detector import TrafficLightDetector
+from crosswalk_detector import CrosswalkDetector
+from curb_detector import CurbDetector
+from door_detector import DoorDetector
+from retail_detector import RetailDetector
+from tactile_paving_detector import TactilePavingDetector
+
 
 class NavigationSystem:
     """
@@ -101,6 +110,15 @@ class NavigationSystem:
         
         # Phase 3 modules
         self.telemetry: Optional[TelemetryLogger] = None
+        
+        # Navigation detectors
+        self.stair_detector: Optional[StairDetector] = None
+        self.traffic_light_detector: Optional[TrafficLightDetector] = None
+        self.crosswalk_detector: Optional[CrosswalkDetector] = None
+        self.curb_detector: Optional[CurbDetector] = None
+        self.door_detector: Optional[DoorDetector] = None
+        self.retail_detector: Optional[RetailDetector] = None
+        self.tactile_paving_detector: Optional[TactilePavingDetector] = None
         
         # Latest scene analysis (for voice queries)
         self._latest_scene = None
@@ -301,6 +319,25 @@ class NavigationSystem:
                 print("[Main] WARNING: Telemetry not started")
                 self.telemetry = None
             
+            # Initialize navigation detectors
+            print("\n[Main] Initializing navigation detectors...")
+            detector_classes = [
+                ('stair_detector', StairDetector),
+                ('traffic_light_detector', TrafficLightDetector),
+                ('crosswalk_detector', CrosswalkDetector),
+                ('curb_detector', CurbDetector),
+                ('door_detector', DoorDetector),
+                ('retail_detector', RetailDetector),
+                ('tactile_paving_detector', TactilePavingDetector),
+            ]
+            for attr_name, cls in detector_classes:
+                try:
+                    det = cls(config_path=self.config_path)
+                    setattr(self, attr_name, det)
+                except Exception as e:
+                    print(f"[Main] WARNING: {cls.__name__} init failed: {e}")
+                    setattr(self, attr_name, None)
+            
             self._running = True
             self._start_time = time.time()
             
@@ -442,6 +479,46 @@ class NavigationSystem:
                         alerts=safety_result.alerts
                     )
                     scene_time = (time.time() - scene_start) * 1000
+                
+                # ---- Navigation detectors ----
+                nav_det_start = time.time()
+                nav_alerts = []
+                frame_data = frame_packet.data
+                
+                # RGB-based detectors
+                for det_attr, det_name in [
+                    ('traffic_light_detector', 'Traffic Light'),
+                    ('crosswalk_detector', 'Crosswalk'),
+                    ('door_detector', 'Door'),
+                    ('retail_detector', 'Retail'),
+                    ('tactile_paving_detector', 'Tactile Paving'),
+                ]:
+                    det = getattr(self, det_attr, None)
+                    if det is not None and det.is_enabled:
+                        try:
+                            result = det.detect(frame_data)
+                            if result.detected:
+                                nav_alerts.append(result)
+                        except Exception as e:
+                            if self._print_latency:
+                                print(f"[Main] {det_name} error: {e}")
+                
+                # Depth-based detectors (stair, curb) — skipped when no depth map
+                # These are wired up for future depth estimation integration
+                
+                nav_det_time = (time.time() - nav_det_start) * 1000
+                
+                # Announce navigation detector alerts
+                if nav_alerts and self.audio:
+                    for nav_alert in nav_alerts:
+                        announcement = nav_alert.get_announcement()
+                        if announcement:
+                            self.audio.speak(announcement, priority=3)
+                
+                # Log nav detector alerts to telemetry
+                if nav_alerts and self.telemetry:
+                    for nav_alert in nav_alerts:
+                        self.telemetry.log_alert(nav_alert)
                 
                 # Log telemetry (Phase 3) — Issue 1.4: inline metrics
                 if self.telemetry is not None:
@@ -653,6 +730,26 @@ class NavigationSystem:
             audio_stats = self.audio.get_stats()
             print(f"  Announcements: {audio_stats['total_announcements']}")
             print(f"  Interrupted: {audio_stats['interrupted_count']}")
+        
+        # Navigation detector stats
+        det_names = [
+            ('stair_detector', 'Stair'),
+            ('traffic_light_detector', 'Traffic Light'),
+            ('crosswalk_detector', 'Crosswalk'),
+            ('curb_detector', 'Curb'),
+            ('door_detector', 'Door'),
+            ('retail_detector', 'Retail'),
+            ('tactile_paving_detector', 'Tactile Paving'),
+        ]
+        active_dets = []
+        for attr, label in det_names:
+            det = getattr(self, attr, None)
+            if det is not None:
+                stats = det.get_stats()
+                if stats.get('total_detections', 0) > 0:
+                    active_dets.append(f"{label}: {stats['total_detections']}")
+        if active_dets:
+            print(f"  Nav detections: {', '.join(active_dets)}")
         
         print("=" * 60)
     

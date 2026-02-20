@@ -1,0 +1,83 @@
+{
+  "timestamp": "2026-02-16T13:34:50",
+  "python_version": "3.13.6",
+  "results": [
+    {
+      "label": "SafetyManager.analyze (1 detection)",
+      "iterations": 5000,
+      "avg_ms": 0.0019,
+      "min_ms": 0.0018,
+      "max_ms": 0.0203,
+      "median_ms": 0.0019,
+      "stdev_ms": 0.0004,
+      "p95_ms": 0.002,
+      "p99_ms": 0.0023
+    },
+    {
+      "label": "SafetyManager.analyze (5 detections)",
+      "iterations": 5000,
+      "avg_ms": 0.0061,
+      "min_ms": 0.0053,
+      "max_ms": 0.1155,
+      "median_ms": 0.0058,
+      "stdev_ms": 0.0023,
+      "p95_ms": 0.007,
+      "p99_ms": 0.0111
+    },
+    {
+      "label": "SafetyManager.analyze (10 detections)",
+      "iterations": 2000,
+      "avg_ms": 0.0108,
+      "min_ms": 0.0103,
+      "max_ms": 0.0274,
+      "median_ms": 0.0106,
+      "stdev_ms": 0.0009,
+      "p95_ms": 0.0117,
+      "p99_ms": 0.015
+    },
+    {
+      "label": "Distance estimation (calibrated)",
+      "iterations": 10000,
+      "avg_ms": 0.0004,
+      "min_ms": 0.0003,
+      "max_ms": 0.007,
+      "median_ms": 0.0003,
+      "stdev_ms": 0.0001,
+      "p95_ms": 0.0004,
+      "p99_ms": 0.0005
+    },
+    {
+      "label": "Distance estimation (fallback)",
+      "iterations": 10000,
+      "avg_ms": 0.0003,
+      "min_ms": 0.0002,
+      "max_ms": 0.0018,
+      "median_ms": 0.0003,
+      "stdev_ms": 0.0,
+      "p95_ms": 0.0003,
+      "p99_ms": 0.0004
+    },
+    {
+      "label": "StairDetector.detect (stair pattern)",
+      "iterations": 2000,
+      "avg_ms": 0.0004,
+      "min_ms": 0.0003,
+      "max_ms": 0.2059,
+      "median_ms": 0.0003,
+      "stdev_ms": 0.0046,
+      "p95_ms": 0.0004,
+      "p99_ms": 0.0004
+    },
+    {
+      "label": "StairDetector.detect (flat surface)",
+      "iterations": 2000,
+      "avg_ms": 0.013,
+      "min_ms": 0.0054,
+      "max_ms": 1.523,
+      "median_ms": 0.0065,
+      "stdev_ms": 0.0414,
+      "p95_ms": 0.0168,
+      "p99_ms": 0.0635
+    }
+  ]
+}
